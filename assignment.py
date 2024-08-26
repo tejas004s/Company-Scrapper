@@ -61,7 +61,7 @@ def save_results_to_csv(results, output_file):
 # Main script
 def main():
     companies = load_company_names('data.csv')
-    api_key = 'fd4a9f709252960d4797df5921143a1f'  # Replace with your actual API key
+    api_key = 'fd4a9f709252960d4797df5921143a1f' 
     results = []
 
     for company in companies:
