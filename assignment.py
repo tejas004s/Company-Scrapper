@@ -6,11 +6,15 @@ import csv
 
 
 # Load company names from CSV
+
+
 def load_company_names(csv_file):
     return pd.read_csv(csv_file)['Company Name'].tolist()
 
 
 # Fetch founder info using Crunchbase API
+
+
 def fetch_founder_from_api(company_name, api_key):
     try:
         url = f"https://api.crunchbase.com/api/v4/entities/organizations/{company_name.lower()}?user_key={api_key}"
