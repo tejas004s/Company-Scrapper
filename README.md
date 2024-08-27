@@ -26,7 +26,7 @@ Installation
 
 2. Download the spaCy English model:
    ```bash
-   python -m spacy download en_core_web_sm
+   python -m spacy download en_core_web_md
    ```
 
 3. Download and set up ChromeDriver:
