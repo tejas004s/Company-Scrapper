@@ -53,7 +53,9 @@ Example Output
 The `founders.csv` file will look like:
 
 | Company Name | Founder Names       | Source   |
-| Example Inc. | John Doe, Jane Smith | Wikipedia|
+
+| Disney Inc. | Tom , Jerry  | Wikipedia|
+
 | Acme Corp.   | Alice Johnson        | Google   |
 
  Resources Used
