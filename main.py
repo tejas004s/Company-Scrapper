@@ -119,6 +119,6 @@ def process_companies(input_file, output_file):
 
 if __name__ == "__main__":
     try:
-        process_companies('data.csv', 'founders.csv')
+        process_companies('Company_Names_Dataset.csv', 'founders.csv')
     finally:
         driver.quit()
