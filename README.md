@@ -75,6 +75,7 @@ Challenges Faced
 
 Future Improvements
 
+- Model doesn't necessarily work for more than one founder because of NER, it detects too many irrelevant people hence keyword is restricted.
 - Enhancing NER accuracy: Fine-tuning the NER model or adding custom rules to improve the accuracy of founder name extraction.
 - Parallel processing: Implementing multi-threading or asynchronous processing to speed up the scraping process for large datasets.
   side-note: Although parallel processing speeds up the script it comes at a cost of computer cpu resources, which my cpu couldn't handle so if you have larger computer cpu resource try this.
