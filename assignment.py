@@ -1,93 +1,124 @@
-import pandas as pd
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
-import time
 import csv
+import spacy
+import re
+import logging
+import time
 
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Load company names from CSV
+# Load spaCy model for NER
+nlp = spacy.load("en_core_web_sm")
 
+# Path to chromedriver
+CHROMEDRIVER_PATH = 'chromedriver.exe'
 
-def load_company_names(csv_file):
-    return pd.read_csv(csv_file)['Company Name'].tolist()
+# Configure WebDriver
+options = webdriver.ChromeOptions()
+options.add_argument('--headless')  # Run in headless mode
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-dev-shm-usage')
 
+# Initialize WebDriver
+driver = webdriver.Chrome(service=Service(CHROMEDRIVER_PATH), options=options)
 
-# Fetch founder info using Crunchbase API
+def clean_text(text):
+    """Clean and normalize text."""
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'[^\w\s,.]', '', text)  # Keep only words, spaces, and basic punctuation
+    return text.lower().strip()
 
+def extract_relevant_text(text):
+    """Extract sentences that might mention the founder."""
+    sentences = text.split('.')
+    keywords = ['founder', 'co-founder', 'founder of', 'founded by']
+    relevant_sentences = [s for s in sentences if any(kw in s for kw in keywords)]
+    return ' '.join(relevant_sentences)
 
-def fetch_founder_from_api(company_name, api_key):
+def filter_founder_names(names):
+    """Filter out irrelevant names."""
+    filtered_names = []
+    for name in names:
+        if len(name.split()) >= 2 and not re.search(r'\b(?:search|website|form|adv|llc)\b', name, re.IGNORECASE):
+            filtered_names.append(name)
+    return filtered_names
+
+def extract_founder_names(text):
+    """Use NER to extract potential founder names."""
+    relevant_text = extract_relevant_text(text)
+    doc = nlp(relevant_text)
+    names = [ent.text.strip() for ent in doc.ents if ent.label_ == "PERSON"]
+    return filter_founder_names(names)
+
+def search_google(query):
+    """Search Google for a query."""
+    driver.get("http://www.google.com")
+    search_box = driver.find_element(By.NAME, "q")
+    search_box.clear()
+    search_box.send_keys(query)
+    search_box.send_keys(Keys.RETURN)
+    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "search")))
+    time.sleep(2)  # Allow time for results to load
+
+def get_founder_name_from_wikipedia(company_name):
+    """Try to find the founder on Wikipedia."""
+    search_google(f"{company_name} founder site:wikipedia.org")
     try:
-        url = f"https://api.crunchbase.com/api/v4/entities/organizations/{company_name.lower()}?user_key={api_key}"
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            founders = [item['name'] for item in data.get('founders', [])]
-            return '; '.join(founders) if founders else None
-        else:
-            print(f"API request failed for {company_name}: {response.status_code}")
-            return None
+        first_result = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//h3[contains(text(),'Wikipedia')]"))
+        )
+        first_result.click()
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "firstHeading")))
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        text = clean_text(soup.get_text())
+        names = extract_founder_names(text)
+        if names:
+            return names[:1], "Wikipedia"
     except Exception as e:
-        print(f"An error occurred while fetching data from API for {company_name}: {e}")
-        return None
+        logging.error(f"Error during Wikipedia search: {e}")
+    return ["Not found"], "Wikipedia"
 
-
-# Web scraping logic to find the founder's name (example using Wikipedia)
-def scrape_founder_from_web(company_name):
+def get_founder_name_from_google(company_name):
+    """Try to find the founder via Google search."""
+    search_google(f"{company_name} founder name")
     try:
-        search_url = f"https://en.wikipedia.org/wiki/{company_name.replace(' ', '_')}"
-        response = requests.get(search_url)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            infobox = soup.find('table', {'class': 'infobox vcard'})
-            if infobox:
-                for row in infobox.find_all('tr'):
-                    if 'Founder' in row.text:
-                        founder_names = row.find('td').text.strip()
-                        return founder_names.replace('\n', '; ')
-        return None
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        text = clean_text(soup.get_text())
+        names = extract_founder_names(text)
+        if names:
+            return names[:1], "Google"
     except Exception as e:
-        print(f"An error occurred while scraping the web for {company_name}: {e}")
-        return None
+        logging.error(f"Error during Google search: {e}")
+    return ["Not found"], "Google"
 
+def get_founder_name(company_name):
+    """Get founder's name from Google, fallback to Wikipedia."""
+    founder_names, source = get_founder_name_from_google(company_name)
+    if "Not found" in founder_names:
+        founder_names, source = get_founder_name_from_wikipedia(company_name)
+    return founder_names, source
 
-# Save results to CSV
-def save_results_to_csv(results, output_file):
-    with open(output_file, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(['Company Name', 'Founder(s)'])
-        writer.writerows(results)
-
-
-# Main script
-def main():
-    companies = load_company_names('data.csv')
-    api_key = 'fd4a9f709252960d4797df5921143a1f' 
-    results = []
-
-    for company in companies:
-        print(f"Processing {company}...")
-        founder = fetch_founder_from_api(company, api_key)
-
-        if not founder:
-            print(f"API failed or returned no data for {company}. Attempting to scrape...")
-            founder = scrape_founder_from_web(company)
-
-        if founder:
-            print(f"Founder of {company}: {founder}")
-        else:
-            print(f"Founder information for {company} not found.")
-            founder = "Not Found"
-
-        results.append([company, founder])
-
-        # To avoid getting blocked by too many requests
-        time.sleep(1)
-
-    # Save results to a new CSV file
-    save_results_to_csv(results, 'founders_results.csv')
-    print("Results saved to 'founders_results.csv'.")
-
+def process_companies(input_file, output_file):
+    """Read input CSV, find founders, and write to output CSV."""
+    with open(input_file, newline='', encoding='utf-8') as infile, open(output_file, 'w', newline='', encoding='utf-8') as outfile:
+        reader = csv.reader(infile)
+        writer = csv.writer(outfile)
+        writer.writerow(['Company Name', 'Founder Names', 'Source'])
+        for row in reader:
+            company_name = row[0].strip()
+            if company_name:  # Skip if company name is empty
+                founder_names, source = get_founder_name(company_name)
+                writer.writerow([company_name, ', '.join(founder_names), source])
 
 if __name__ == "__main__":
-    main()
-
+    try:
+        process_companies('data.csv', 'founders.csv')
+    finally:
+        driver.quit()
