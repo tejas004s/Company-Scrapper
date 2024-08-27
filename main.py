@@ -1,4 +1,3 @@
-# Import necessary libraries for Selenium and web scraping
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
@@ -10,116 +9,121 @@ import csv
 import spacy
 import re
 import logging
-import time
 
-# Set up logging to track the script's activity
+# Configure logging for better visibility of process flow and errors
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Load spaCy model for Named Entity Recognition (NER)
+# Load the spaCy NLP model for named entity recognition (NER)
 nlp = spacy.load("en_core_web_sm")
 
-# Path to the ChromeDriver executable
-CHROMEDRIVER_PATH = 'chromedriver.exe'
+# Specify the path to the chromedriver executable
+chrome_service = Service('chromedriver.exe')
 
-# Configure WebDriver options for Chrome
+# Initialize Chrome WebDriver options
 options = webdriver.ChromeOptions()
-options.add_argument('--headless')  # Run Chrome in headless mode (without a GUI)
-options.add_argument('--no-sandbox')
-options.add_argument('--disable-dev-shm-usage')
+options.add_argument('--headless')  # Run in headless mode (no GUI) for better performance
+options.add_argument('--no-sandbox')  # Bypass OS security model for better stability
+options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems in some environments
 
-# Initialize WebDriver with the specified options
-driver = webdriver.Chrome(service=Service(CHROMEDRIVER_PATH), options=options)
+# Create the WebDriver instance with specified service and options
+driver = webdriver.Chrome(service=chrome_service, options=options)
 
 def clean_text(text):
-    """Clean and normalize text by removing unnecessary characters and whitespace."""
-    text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces with a single space
-    text = re.sub(r'[^\w\s,.]', '', text)  # Keep only words, spaces, and basic punctuation
-    return text.lower().strip()  # Convert text to lowercase and remove leading/trailing whitespace
+    """Clean and normalize text for better NER extraction."""
+    # Replace multiple spaces with a single space
+    text = re.sub(r'\s+', ' ', text)
+    # Remove unwanted punctuation and special characters
+    return re.sub(r'[^\w\s,.]', '', text).strip()
 
 def extract_relevant_text(text):
-    """Extract sentences that are likely to mention the founder from the given text."""
-    sentences = text.split('.')  # Split text into sentences
-    keywords = ['founder', 'co-founder', 'founder of', 'founded by']  # Keywords to identify relevant sentences
-    relevant_sentences = [s for s in sentences if any(kw in s for kw in keywords)]  # Filter sentences containing keywords
-    return ' '.join(relevant_sentences)  # Join relevant sentences into a single string
+    """Extract sentences that are likely to contain the founder's name."""
+    # Split the text into sentences
+    sentences = text.split('.')
+    # Filter sentences that mention the word "founder"
+    relevant_sentences = [sentence for sentence in sentences if 'founder' in sentence.lower()]
+    return ' '.join(relevant_sentences)
 
 def filter_founder_names(names):
-    """Filter out irrelevant names based on certain criteria."""
+    """Filter out irrelevant or incomplete names."""
     filtered_names = []
+
     for name in names:
-        if len(name.split()) >= 2 and not re.search(r'\b(?:search|website|form|adv|llc)\b', name, re.IGNORECASE):
-            filtered_names.append(name)  # Keep names with at least two words and no unwanted keywords
+        # Include only names that have at least two parts (e.g., first and last name)
+        if len(name.split()) >= 2:
+            filtered_names.append(name)
+
     return filtered_names
 
 def extract_founder_names(text):
-    """Use spaCy's NER to extract potential founder names from the relevant text."""
+    """Use spaCy NER to extract person names from relevant text."""
+    # Extract sentences likely to contain founder's names
     relevant_text = extract_relevant_text(text)
-    doc = nlp(relevant_text)  # Apply NER to the relevant text
-    names = [ent.text.strip() for ent in doc.ents if ent.label_ == "PERSON"]  # Extract entities labeled as PERSON
-    return filter_founder_names(names)  # Filter out irrelevant names
+    # Run NER on the relevant text to identify entities labeled as "PERSON"
+    doc = nlp(relevant_text)
+    # Extract the names from the identified entities
+    names = [ent.text.strip() for ent in doc.ents if ent.label_ == "PERSON"]
+    return filter_founder_names(names)
 
 def search_google(query):
-    """Search Google for the specified query."""
-    driver.get("http://www.google.com")  # Open Google in the browser
-    search_box = driver.find_element(By.NAME, "q")  # Find the search box element
-    search_box.clear()  # Clear any existing text in the search box
-    search_box.send_keys(query)  # Enter the search query
-    search_box.send_keys(Keys.RETURN)  # Submit the search form
-    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "search")))  # Wait for the search results to load
-    time.sleep(2)  # Allow additional time for results to fully load
+    """Perform a Google search and wait for the results to load."""
+    driver.get("http://www.google.com")
+    search_box = driver.find_element(By.NAME, "q")  # Find the search box
+    search_box.clear()  # Clear any pre-existing text in the search box
+    search_box.send_keys(query)  # Type the search query
+    search_box.send_keys(Keys.RETURN)  # Submit the search
+    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "search")))  # Wait until search results are loaded
+
+def get_founder_name_from_google(company_name):
+    """Search for the founder's name using Google search results."""
+    search_google(f"{company_name} founder name")  # Search for the company's founder name on Google
+    try:
+        soup = BeautifulSoup(driver.page_source, 'html.parser')  # Parse the search result page
+        text = clean_text(soup.get_text())  # Clean the extracted text
+        names = extract_founder_names(text)  # Extract names from the cleaned text
+        if names:
+            return names[:1], "Google"  # Return the first valid name found and the source
+    except Exception as e:
+        logging.error(f"Error during Google search: {e}")  # Log any errors during the search
+    return ["Not found"], "Google"  # Return "Not found" if no name is extracted
 
 def get_founder_name_from_wikipedia(company_name):
-    """Try to find the founder's name on Wikipedia using Google search."""
-    search_google(f"{company_name} founder site:wikipedia.org")  # Search for the company's founder on Wikipedia
+    """Search for the founder's name on Wikipedia using Google search."""
+    search_google(f"{company_name} founder site:wikipedia.org")  # Search specifically on Wikipedia
     try:
         first_result = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//h3[contains(text(),'Wikipedia')]"))
-        )  # Wait for a Wikipedia result to appear and select it
-        first_result.click()  # Click on the first Wikipedia result
+        )  # Wait for the Wikipedia result to appear and click on it
+        first_result.click()
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "firstHeading")))  # Wait for the Wikipedia page to load
-        soup = BeautifulSoup(driver.page_source, 'html.parser')  # Parse the page source with BeautifulSoup
-        text = clean_text(soup.get_text())  # Clean the text content of the page
-        names = extract_founder_names(text)  # Extract founder names using NER
+        soup = BeautifulSoup(driver.page_source, 'html.parser')  # Parse the Wikipedia page
+        text = clean_text(soup.get_text())  # Clean the extracted text
+        names = extract_founder_names(text)  # Extract names from the cleaned text
         if names:
-            return names[:1], "Wikipedia"  # Return the first found name and the source
+            return names[:1], "Wikipedia"  # Return the first valid name found and the source
     except Exception as e:
-        logging.error(f"Error during Wikipedia search: {e}")  # Log any errors encountered
-    return ["Not found"], "Wikipedia"  # Return "Not found" if no names are extracted
-
-def get_founder_name_from_google(company_name):
-    """Try to find the founder's name directly via Google search."""
-    search_google(f"{company_name} founder name")  # Search for the company's founder on Google
-    try:
-        soup = BeautifulSoup(driver.page_source, 'html.parser')  # Parse the page source with BeautifulSoup
-        text = clean_text(soup.get_text())  # Clean the text content of the page
-        names = extract_founder_names(text)  # Extract founder names using NER
-        if names:
-            return names[:1], "Google"  # Return the first found name and the source
-    except Exception as e:
-        logging.error(f"Error during Google search: {e}")  # Log any errors encountered
-    return ["Not found"], "Google"  # Return "Not found" if no names are extracted
+        logging.error(f"Error during Wikipedia search: {e}")  # Log any errors during the search
+    return ["Not found"], "Wikipedia"  # Return "Not found" if no name is extracted
 
 def get_founder_name(company_name):
-    """Attempt to retrieve the founder's name, using Google first, then Wikipedia as a fallback."""
-    founder_names, source = get_founder_name_from_google(company_name)  # Try Google search first
+    """Get the founder's name by first searching on Google and then on Wikipedia if needed."""
+    founder_names, source = get_founder_name_from_google(company_name)  # Try getting the founder's name from Google
     if "Not found" in founder_names:
-        founder_names, source = get_founder_name_from_wikipedia(company_name)  # Fallback to Wikipedia if Google fails
-    return founder_names, source  # Return the found names and their source
+        founder_names, source = get_founder_name_from_wikipedia(company_name)  # Fallback to Wikipedia if not found on Google
+    return founder_names, source
 
 def process_companies(input_file, output_file):
-    """Process a list of company names from a CSV file to find and write their founders' names to an output CSV."""
+    """Read company names from an input CSV, extract founders' names, and write the results to an output CSV."""
     with open(input_file, newline='', encoding='utf-8') as infile, open(output_file, 'w', newline='', encoding='utf-8') as outfile:
-        reader = csv.reader(infile)
-        writer = csv.writer(outfile)
-        writer.writerow(['Company Name', 'Founder Names', 'Source'])  # Write header row to output CSV
+        reader = csv.reader(infile)  # Create a CSV reader for the input file
+        writer = csv.writer(outfile)  # Create a CSV writer for the output file
+        writer.writerow(['Company Name', 'Founder Names', 'Source'])  # Write the header row
         for row in reader:
-            company_name = row[0].strip()  # Read and clean each company name
-            if company_name:  # Skip if company name is empty
-                founder_names, source = get_founder_name(company_name)  # Get the founder names and source
-                writer.writerow([company_name, ', '.join(founder_names), source])  # Write the results to the output CSV
+            company_name = row[0]  # Extract the company name from each row
+            founder_names, source = get_founder_name(company_name)  # Get the founder's name and the source
+            writer.writerow([company_name, ', '.join(founder_names), source])  # Write the results to the output CSV
 
 if __name__ == "__main__":
     try:
-        process_companies('Company_Names_Dataset.csv', 'founders.csv')  # Start the process of finding founder names
+        process_companies('Company_Names_Dataset.csv', 'founders.csv')  # Process the companies in the input CSV
     finally:
-        driver.quit()  # Ensure the WebDriver is properly closed after execution
+        driver.quit()  # Ensure the WebDriver is properly closed after the process is complete
